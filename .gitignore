@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Data (raw scraped data should not be committed)
+data/raw/
+data/processed/*.csv
+data/processed/*.parquet
+*.db
+*.sqlite
+
+# Secrets
+.env
+*.key
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Model artifacts (large files — use DVC or store externally)
+models/*.pkl
+models/*.joblib
+models/*.json
+
+# Logs
+logs/
+*.log
