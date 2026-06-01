@@ -1,4 +1,0 @@
-
-
-=== TABLE 0 ===
-<table class="auflistung"><tbody><tr><td>Filter by season</td><td><div class="inline-select"><div class="tm-select-box  svelte-bhc6zu" data-name="seasons-select" style=""><!----><div class="select-anchor svelte-bhc6zu"><button type="button" class="svelte-bhc6zu"><span class="svelte-bhc6zu"><!----><!---->19/20<!----></span><!----> <i class="chevron svelte-bhc6zu"></i></button> <!----></div> <!----><!----></div><!----></div></td><td><span role="button" tabindex="0" class="small button">Show</span><!----></td></tr></tbody></table>

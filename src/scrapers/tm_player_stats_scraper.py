@@ -107,7 +107,7 @@ def parse_innertext(text: str, player_tm_id: str,
     Finds the 'STATS OF' section, then walks line by line consuming
     competition name + 7 value lines per block.
     """
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
     # Find anchor: "STATS OF ..."
     start = None
@@ -221,7 +221,7 @@ def scrape_season(driver: uc.Chrome, player_tm_id: str,
         time.sleep(1)
 
     if "stats of" not in text.lower():
-        log.warning(f"      Stats content never appeared — waiting 30s and retrying...")
+        log.warning("      Stats content never appeared — waiting 30s and retrying...")
         time.sleep(30)
         text = driver.execute_script("return document.body.innerText;") or ""
         if "stats of" not in text.lower():

@@ -3,8 +3,6 @@ Tests for feature engineering pipeline.
 """
 
 import pandas as pd
-import numpy as np
-import pytest
 from src.features.build_features import encode_injury_history, compute_congestion
 
 

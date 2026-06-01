@@ -366,7 +366,7 @@ def run(input_path: str, output_path: str) -> None:
 
     save_crosswalk(crosswalk, crosswalk_path)
 
-    log.info(f"\n✅ Done.")
+    log.info("\n✅ Done.")
     log.info(f"   Match logs → {out_path}")
     log.info(f"   Crosswalk  → {crosswalk_path}")
 
