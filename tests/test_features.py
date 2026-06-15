@@ -2,8 +2,11 @@
 Tests for feature engineering pipeline.
 """
 
+import csv
+
 import pandas as pd
-from src.features.build_features import encode_injury_history, compute_congestion
+
+from src.features.build_features import compute_congestion, encode_injury_history
 
 
 def test_encode_injury_history_empty():
@@ -57,16 +60,12 @@ def test_compute_congestion():
         }
     )
     result = compute_congestion(logs, reference)
-    # last 14d: March 10, 15 → 2 games
     assert result["games_last_14d"] == 2
-    # last 30d: March 1, 10, 15 → 3 games → 90+75+60=225 mins
     assert result["minutes_last_30d"] == 225
 
 
 def test_surface_flag_range():
     """Surface type should only be 0 (grass) or 1 (astro)."""
-    import csv
-
     with open("data/surface_mapping/stadium_surfaces.csv") as f:
         reader = csv.DictReader(f)
         for row in reader:
