@@ -1,210 +1,259 @@
 """
-PitchGuard Model Training
---------------------------
-Trains XGBoost / LightGBM classifier for injury risk prediction.
-Outputs: trained model, SHAP explainer, evaluation metrics.
+PitchGuard — Model Training
+File: src/model/train.py
 
-Usage:
-    python src/model/train.py --features data/processed/features.parquet \
-                               --model xgboost --output models/
+Run:
+    python src/model/train.py
+
+Outputs:
+    models/xgboost_model.pkl
+    models/feature_columns.json
+    models/shap_summary.png   (save figure for paper)
 """
 
-import argparse
+import os
 import json
-import logging
 import pickle
-from pathlib import Path
-
+import warnings
 import pandas as pd
+import numpy as np
+import xgboost as xgb
 import shap
+import matplotlib.pyplot as plt
+
+from sklearn.metrics import classification_report, roc_auc_score
 from imblearn.over_sampling import SMOTE
-from sklearn.metrics import (
-    classification_report,
-    roc_auc_score,
-    f1_score,
-)
-from sklearn.preprocessing import label_binarize
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore")
 
-# Features used for training — mirrors PRD Section 5
+# ── Paths ────────────────────────────────────────────────────────────────────
+DATA_PATH = "data/processed/model_dataset.csv"
+MODELS_DIR = "models"
+os.makedirs(MODELS_DIR, exist_ok=True)
+
+# ── Feature columns ───────────────────────────────────────────────────────────
+# Stats columns (avg_minutes_per_game, total_appearances) may be NaN while
+# the scraper is still running — they are included but NaNs are imputed below.
 FEATURE_COLS = [
-    "age",
+    "age_at_season_start",
     "height_cm",
-    "weight_kg",
-    "position_code",
-    "injury_count_2y",
+    "is_goalkeeper",
+    "is_defender",
+    "is_midfielder",
+    "is_forward",
+    "strong_foot_right",
+    "strong_foot_left",
+    "home_surface_type",
+    "injury_surface",
+    "injury_count_prior",
+    "injury_count_2yr",
+    "injury_count_impact_prior",
     "days_since_last_injury",
     "has_acl",
     "has_hamstring",
     "has_ankle",
     "has_meniscus",
-    "minutes_last_30d",
-    "games_last_14d",
-    "season_minutes",
+    "total_appearances",
     "avg_minutes_per_game",
-    "upcoming_surface",
-    "home_surface",
-    "is_home",
-    "league_pl",
-    "league_la_liga",
-    "league_bundesliga",
-    "league_serie_a",
-    "league_ligue_1",
-    "league_super_lig",
 ]
 
-TARGET_COL = "risk_label"  # 0=Low, 1=Medium, 2=High
-RISK_LABELS = {0: "Low", 1: "Medium", 2: "High"}
+TARGET_COL = "is_impact_injury"
+
+# ── Season splits (NEVER shuffle — always chronological) ─────────────────────
+TRAIN_SEASONS = ["19/20", "20/21", "21/22", "22/23"]
+VAL_SEASONS = ["23/24"]
+TEST_SEASONS = ["24/25", "25/26"]
 
 
-def load_data(features_path: str) -> pd.DataFrame:
-    path = Path(features_path)
-    if path.suffix == ".parquet":
-        return pd.read_parquet(path)
-    return pd.read_csv(path)
+def load_data():
+    print(f"[1/7] Loading data from {DATA_PATH} ...")
+    df = pd.read_csv(DATA_PATH)
+    print(f"      Rows: {len(df):,}  |  Columns: {df.shape[1]}")
+
+    # Warn about missing stat columns so you know when scraper is still running
+    missing_pct = df[["total_appearances", "avg_minutes_per_game"]].isna().mean() * 100
+    for col, pct in missing_pct.items():
+        if pct > 0:
+            print(
+                f"      ⚠️  {col} is {pct:.1f}% NaN (stats scraper still running — OK to proceed)"
+            )
+
+    return df
 
 
-def time_split(df: pd.DataFrame, test_year: int = 2024):
-    """
-    Temporal train/test split to prevent data leakage.
-    Train: up to end of test_year-1. Test: test_year onwards.
-    """
-    df["reference_date"] = pd.to_datetime(df["reference_date"])
-    train = df[df["reference_date"].dt.year < test_year]
-    test = df[df["reference_date"].dt.year >= test_year]
-    logger.info(f"Train size: {len(train)}, Test size: {len(test)}")
-    return train, test
+def split_data(df):
+    print("[2/7] Splitting by season ...")
 
+    train_df = df[df["season"].isin(TRAIN_SEASONS)]
+    val_df = df[df["season"].isin(VAL_SEASONS)]
+    test_df = df[df["season"].isin(TEST_SEASONS)]
 
-def apply_smote(X: pd.DataFrame, y: pd.Series):
-    """Apply SMOTE to handle class imbalance (injuries are rare events)."""
-    smote = SMOTE(random_state=42)
-    X_res, y_res = smote.fit_resample(X, y)
-    logger.info(
-        f"After SMOTE — class distribution: {pd.Series(y_res).value_counts().to_dict()}"
+    print(
+        f"      Train: {len(train_df):,} rows | Val: {len(val_df):,} rows | Test: {len(test_df):,} rows"
     )
+
+    if len(val_df) == 0:
+        raise ValueError(
+            "Validation set is empty — check that 'season' column uses format '23/24'."
+        )
+
+    return train_df, val_df, test_df
+
+
+def prepare_xy(df):
+    """Extract features + target; impute NaN stats with column median."""
+    # Only keep columns that exist in the dataframe
+    available = [c for c in FEATURE_COLS if c in df.columns]
+    missing_cols = set(FEATURE_COLS) - set(available)
+    if missing_cols:
+        print(f"      ⚠️  These feature columns are not in the CSV yet: {missing_cols}")
+        print(
+            "         They will be filled with 0 — rerun train.py once build_features.py is rerun with full stats."
+        )
+
+    X = df[available].copy()
+
+    # Add any missing feature columns as zeros so the model always sees the same shape
+    for col in FEATURE_COLS:
+        if col not in X.columns:
+            X[col] = 0
+
+    X = X[FEATURE_COLS]  # enforce column order
+
+    # Impute NaN with median (safe for both sparse and full data)
+    X = X.fillna(X.median(numeric_only=True))
+
+    y = df[TARGET_COL].astype(int)
+    return X, y
+
+
+def apply_smote(X_train, y_train):
+    print("[3/7] Applying SMOTE on training data only ...")
+    print(
+        f"      Before — positive: {y_train.sum():,} | negative: {(y_train==0).sum():,}"
+    )
+    sm = SMOTE(random_state=42)
+    X_res, y_res = sm.fit_resample(X_train, y_train)
+    print(f"      After  — positive: {y_res.sum():,} | negative: {(y_res==0).sum():,}")
     return X_res, y_res
 
 
-def get_model(model_type: str):
-    if model_type == "xgboost":
-        from xgboost import XGBClassifier
+def train_model(X_train_res, y_train_res, X_val, y_val):
+    print("[4/7] Training XGBoost ...")
 
-        return XGBClassifier(
-            n_estimators=300,
-            max_depth=6,
-            learning_rate=0.05,
-            use_label_encoder=False,
-            eval_metric="mlogloss",
-            random_state=42,
-        )
-    elif model_type == "lightgbm":
-        from lightgbm import LGBMClassifier
-
-        return LGBMClassifier(
-            n_estimators=300,
-            max_depth=6,
-            learning_rate=0.05,
-            random_state=42,
-            verbose=-1,
-        )
-    elif model_type == "random_forest":
-        from sklearn.ensemble import RandomForestClassifier
-
-        return RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)
-    else:
-        raise ValueError(f"Unknown model type: {model_type}")
-
-
-def evaluate(model, X_test: pd.DataFrame, y_test: pd.Series) -> dict:
-    y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)
-
-    y_bin = label_binarize(y_test, classes=[0, 1, 2])
-    auc = roc_auc_score(y_bin, y_prob, multi_class="ovr", average="macro")
-
-    report = classification_report(
-        y_test, y_pred, target_names=list(RISK_LABELS.values()), output_dict=True
+    scale_pos = len(y_train_res[y_train_res == 0]) / max(
+        len(y_train_res[y_train_res == 1]), 1
     )
-    macro_f1 = f1_score(y_test, y_pred, average="macro")
 
-    metrics = {
-        "macro_auc_roc": round(auc, 4),
-        "macro_f1": round(macro_f1, 4),
-        "classification_report": report,
-    }
-    logger.info(f"Macro AUC-ROC: {auc:.4f} | Macro F1: {macro_f1:.4f}")
-    return metrics
+    model = xgb.XGBClassifier(
+        n_estimators=300,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42,
+        scale_pos_weight=scale_pos,
+        eval_metric="logloss",
+        early_stopping_rounds=20,
+        verbosity=0,
+    )
+
+    model.fit(
+        X_train_res,
+        y_train_res,
+        eval_set=[(X_val, y_val)],
+        verbose=50,
+    )
+
+    print(f"      Best iteration: {model.best_iteration}")
+    return model
 
 
-def compute_shap(model, X_train: pd.DataFrame, output_dir: Path):
-    """Compute and save SHAP explainer for dashboard use."""
-    logger.info("Computing SHAP values...")
+def evaluate(model, X_val, y_val, X_test, y_test):
+    print("[5/7] Evaluating ...")
+
+    for split_name, X, y in [("Validation", X_val, y_val), ("Test", X_test, y_test)]:
+        if len(y) == 0:
+            print(f"      {split_name} set empty — skipping")
+            continue
+        preds = model.predict(X)
+        proba = model.predict_proba(X)[:, 1]
+        print(f"\n      ── {split_name} ──")
+        print(
+            classification_report(y, preds, target_names=["No Injury", "Impact Injury"])
+        )
+        try:
+            auc = roc_auc_score(y, proba)
+            print(f"      AUC-ROC: {auc:.4f}")
+        except ValueError:
+            print("      AUC-ROC: N/A (only one class in split)")
+
+
+def run_shap(model, X_test):
+    print("[6/7] Computing SHAP values ...")
     explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_test)
 
-    explainer.shap_values(X_train.sample(min(500, len(X_train)), random_state=42))
+    # Global summary plot — save for paper Figure 1
+    plt.figure()
+    shap.summary_plot(shap_values, X_test, feature_names=FEATURE_COLS, show=False)
+    fig_path = os.path.join(MODELS_DIR, "shap_summary.png")
+    plt.savefig(fig_path, bbox_inches="tight", dpi=150)
+    plt.close()
+    print(f"      SHAP summary plot saved → {fig_path}")
 
-    with open(output_dir / "shap_explainer.pkl", "wb") as f:
-        pickle.dump(explainer, f)
-    logger.info(f"SHAP explainer saved to {output_dir / 'shap_explainer.pkl'}")
-    return explainer
+    # Print top 5 features by mean |SHAP|
+    mean_shap = np.abs(shap_values).mean(axis=0)
+    top_idx = mean_shap.argsort()[::-1][:5]
+    print("\n      Top 5 features by mean |SHAP|:")
+    for rank, i in enumerate(top_idx, 1):
+        print(f"        {rank}. {FEATURE_COLS[i]:<35} {mean_shap[i]:.4f}")
+
+    return shap_values
 
 
-def main(features_path: str, model_type: str, output_dir: str):
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+def save_model(model):
+    print("[7/7] Saving model and feature columns ...")
+    model_path = os.path.join(MODELS_DIR, "xgboost_model.pkl")
+    cols_path = os.path.join(MODELS_DIR, "feature_columns.json")
 
-    # Load data
-    df = load_data(features_path)
-    missing_cols = [c for c in FEATURE_COLS + [TARGET_COL] if c not in df.columns]
-    if missing_cols:
-        raise ValueError(f"Missing columns in dataset: {missing_cols}")
+    with open(model_path, "wb") as f:
+        pickle.dump(model, f)
+    with open(cols_path, "w") as f:
+        json.dump(FEATURE_COLS, f, indent=2)
 
-    df = df.dropna(subset=FEATURE_COLS)
+    print(f"      Model saved    → {model_path}")
+    print(f"      Features saved → {cols_path}")
 
-    # Time split
-    train_df, test_df = time_split(df)
 
-    X_train = train_df[FEATURE_COLS]
-    y_train = train_df[TARGET_COL]
-    X_test = test_df[FEATURE_COLS]
-    y_test = test_df[TARGET_COL]
+def main():
+    print("=" * 55)
+    print("  PitchGuard — Model Training")
+    print("=" * 55)
 
-    # Handle imbalance
+    df = load_data()
+    train_df, val_df, test_df = split_data(df)
+
+    X_train, y_train = prepare_xy(train_df)
+    X_val, y_val = prepare_xy(val_df)
+    X_test, y_test = prepare_xy(test_df)
+
     X_train_res, y_train_res = apply_smote(X_train, y_train)
 
-    # Train
-    model = get_model(model_type)
-    logger.info(f"Training {model_type}...")
-    model.fit(X_train_res, y_train_res)
+    model = train_model(X_train_res, y_train_res, X_val, y_val)
+    evaluate(model, X_val, y_val, X_test, y_test)
 
-    # Evaluate
-    metrics = evaluate(model, X_test, y_test)
+    # SHAP on test set (or val if test is empty)
+    shap_X = X_test if len(y_test) > 0 else X_val
+    run_shap(model, shap_X)
 
-    # Save model
-    model_file = output_path / f"pitchguard_{model_type}.pkl"
-    with open(model_file, "wb") as f:
-        pickle.dump(model, f)
-    logger.info(f"Model saved to {model_file}")
+    save_model(model)
 
-    # Save metrics
-    metrics_file = output_path / "metrics.json"
-    with open(metrics_file, "w") as f:
-        json.dump(metrics, f, indent=2)
-    logger.info(f"Metrics saved to {metrics_file}")
-
-    # SHAP
-    compute_shap(model, X_train, output_path)
+    print(
+        "\n✅ Done. Rerun this script after stats scraper finishes for full-data results."
+    )
+    print("=" * 55)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--features", default="data/processed/features.parquet")
-    parser.add_argument(
-        "--model", default="xgboost", choices=["xgboost", "lightgbm", "random_forest"]
-    )
-    parser.add_argument("--output", default="models/")
-    args = parser.parse_args()
-    main(args.features, args.model, args.output)
+    main()

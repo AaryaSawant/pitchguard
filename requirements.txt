@@ -32,3 +32,7 @@ pytest-cov==5.0.0
 # Dev
 black==24.3.0
 ruff==0.3.5
+
+
+
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR4eHpidHVucWRuc2t3cmtzZnR0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTk1ODkyOSwiZXhwIjoyMDk1NTM0OTI5fQ.pNRgWpawIVRrfkTFQKyDoI_NGBu8PvcWMl7VdVt0xEE
