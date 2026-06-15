@@ -1,0 +1,177 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ── Core Palette ─────────────────────────────────────────────────────── */
+    --color-background: #030d1a;
+    --color-background-elevated: #071525;
+    --color-foreground: #e8f0f8;
+    --color-card: #0b1e33;
+    --color-card-foreground: #e8f0f8;
+    --color-border: #112240;
+
+    /* ── Accent: Neon Green & Blue ────────────────────────────────────────── */
+    --color-accent: #00e87b;
+    --color-accent-bright: #39ff14;
+    --color-accent-dim: #00b862;
+    --color-accent-glow: rgba(0, 232, 123, 0.35);
+
+    /* ── Risk Tiers ───────────────────────────────────────────────────────── */
+    --color-risk-low: #00e87b;
+    --color-risk-medium: #ff9500;
+    --color-risk-high: #ff2d55;
+
+    /* ── Glassmorphism ────────────────────────────────────────────────────── */
+    --glass-bg: rgba(7, 21, 37, 0.5);
+    --glass-bg-hover: rgba(11, 30, 51, 0.6);
+    --glass-border: rgba(0, 232, 123, 0.25);
+    --glass-border-hover: rgba(0, 232, 123, 0.4);
+    --glass-blur: 32px;
+    --glass-inner-glow: inset 2px 2px 1px 0 rgba(255, 255, 255, 0.4), inset -1px -1px 1px 1px rgba(255, 255, 255, 0.15);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 80px rgba(0, 232, 123, 0.08);
+
+    /* ── Muted / Secondary ────────────────────────────────────────────────── */
+    --color-muted: #3a5070;
+    --color-muted-foreground: #7a9ab8;
+
+    --button-ripple-color: oklch(0.145 0 0 / 0.3);
+  }
+
+  .theme {
+    --radius-sm: 0.25rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-xl: 1rem;
+    --radius-none: 0px;
+    --radius-xs: 0.125rem;
+    --radius-default: 0.375rem;
+    --radius-2xl: 1.5rem;
+    --radius-3xl: 1.875rem;
+    --radius-full: 9999px;
+    --color-button-ripple-color: var(----button-ripple-color);
+  }
+
+  .dark {
+    --button-ripple-color: oklch(0.985 0 0 / 0.5);
+  }
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* ─── Glassmorphism Animations ─────────────────────────────────────────────── */
+
+@keyframes moveBackground {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes phaseIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(8px); }
+}
+
+/* ─── New Dashboard Animations ────────────────────────────────────────────── */
+
+@keyframes gaugeReveal {
+  from {
+    stroke-dashoffset: 283;
+  }
+  to {
+    stroke-dashoffset: var(--gauge-offset);
+  }
+}
+
+@keyframes panelSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes panelSlideLeft {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulseGreen {
+  0%, 100% { box-shadow: 0 0 4px rgba(52, 211, 153, 0.4); }
+  50% { box-shadow: 0 0 12px rgba(52, 211, 153, 0.7); }
+}
+
+@keyframes riskBarGrow {
+  from { width: 0; }
+  to { width: var(--bar-width); }
+}
+
+@keyframes dotPulse {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.6); opacity: 0.3; }
+}
+
+@keyframes ambientGlow {
+  0% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.05); }
+  100% { opacity: 0.3; transform: scale(1); }
+}
+
+@keyframes scanLine {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(100vh); }
+}
+
+@keyframes cornerPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
