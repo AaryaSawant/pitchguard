@@ -1,7 +1,8 @@
 """
-PitchGuard — Feature Engineering Pipeline v3
+PitchGuard — Feature Engineering Pipeline v4
 =============================================
-Fixed paths, column names, and stats integration.
+25 features including interaction terms, workload spike,
+turf exposure, and proper imputation.
 
 Usage:
     cd C:\\Users\\Aarya\\Downloads\\Pitchguard\\pitchguard
@@ -39,6 +40,7 @@ SEASON_START_YEAR = {
     "25/26": 2025,
 }
 TARGET_SEASONS = set(SEASON_START_YEAR.keys())
+SEASON_ORDER = ["19/20", "20/21", "21/22", "22/23", "23/24", "24/25", "25/26"]
 
 IMPACT_KW = [
     "acl",
@@ -59,9 +61,11 @@ IMPACT_KW = [
     "quadricep",
 ]
 
+NO_PRIOR_INJURY_DAYS = 999  # sentinel: never injured before
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def parse_date(val) -> pd.Timestamp | None:
+def parse_date(val):
     if pd.isna(val) or str(val).strip() == "":
         return None
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y"):
@@ -139,6 +143,11 @@ def season_from_date(dt) -> str | None:
     return label if label in TARGET_SEASONS else None
 
 
+def prev_season(season: str) -> str | None:
+    idx = SEASON_ORDER.index(season) if season in SEASON_ORDER else -1
+    return SEASON_ORDER[idx - 1] if idx > 0 else None
+
+
 # ── Legacy helpers required by tests ─────────────────────────────────────────
 def encode_injury_history(df: pd.DataFrame) -> dict:
     if df.empty:
@@ -182,35 +191,28 @@ def compute_congestion(match_logs: pd.DataFrame, reference: pd.Timestamp) -> dic
 def load_data():
     log.info("Loading input files...")
 
-    # Player bios
     players = pd.read_csv(RAW / "player_bios.csv", dtype=str).fillna("")
     players.columns = [c.strip().lower().replace(" ", "_") for c in players.columns]
-    # Normalise tm_id column name
     if "player_tm_id" not in players.columns and "tm_id" in players.columns:
         players = players.rename(columns={"tm_id": "player_tm_id"})
-    # Normalise club column
     if "club_name" not in players.columns and "current_club" in players.columns:
         players = players.rename(columns={"current_club": "club_name"})
     log.info(f"  Players:  {len(players)} rows")
 
-    # Injuries
     injuries = pd.read_csv(RAW / "injury_history.csv", dtype=str).fillna("")
     injuries.columns = [c.strip().lower().replace(" ", "_") for c in injuries.columns]
     if "player_tm_id" not in injuries.columns and "tm_id" in injuries.columns:
         injuries = injuries.rename(columns={"tm_id": "player_tm_id"})
     log.info(f"  Injuries: {len(injuries)} rows")
 
-    # Stats — master_stats_final.csv
     stats_path = RAW / "master_stats_final.csv"
     if stats_path.exists() and stats_path.stat().st_size > 100:
         stats = pd.read_csv(stats_path, dtype=str).fillna("")
         stats.columns = [c.strip().lower().replace(" ", "_") for c in stats.columns]
-        # Normalise column names
         if "player_tm_id" not in stats.columns and "tm_id" in stats.columns:
             stats = stats.rename(columns={"tm_id": "player_tm_id"})
         if "minutes_played" not in stats.columns and "minutes" in stats.columns:
             stats = stats.rename(columns={"minutes": "minutes_played"})
-        # Filter to target seasons only (drop standalone years 2019-2026)
         stats = stats[stats["season"].isin(TARGET_SEASONS)]
         log.info(
             f"  Stats:    {len(stats)} rows ({stats['player_tm_id'].nunique()} players)"
@@ -219,7 +221,6 @@ def load_data():
         log.warning("  master_stats_final.csv not found — skipping stats.")
         stats = pd.DataFrame()
 
-    # Surfaces
     surfaces = pd.read_csv(RAW / "stadium_surfaces.csv", dtype=str).fillna("")
     surfaces.columns = [c.strip().lower().replace(" ", "_") for c in surfaces.columns]
     surfaces["surface_type"] = (
@@ -311,7 +312,6 @@ def build_injury_features(
     inj["opponent_surface"] = (
         inj[opp_col].apply(get_surface) if opp_col else inj["home_surface"]
     )
-
     inj["injury_surface"] = inj.apply(
         lambda r: (
             r["opponent_surface"]
@@ -331,7 +331,7 @@ def build_injury_features(
             injury_dt = row["injury_date_dt"]
             prior = grp.iloc[:idx]
             count_career = idx
-            count_impact = prior["is_impact"].sum() if len(prior) > 0 else 0
+            count_impact = int(prior["is_impact"].sum()) if len(prior) > 0 else 0
 
             if injury_dt is not None and len(prior) > 0:
                 two_yr_ago = injury_dt - pd.Timedelta(days=730)
@@ -339,12 +339,17 @@ def build_injury_features(
             else:
                 count_2yr = 0
 
+            # days_since_last_injury — use 999 sentinel for first injury
             if len(prior) > 0 and prior["return_date_dt"].notna().any():
                 last_return = prior["return_date_dt"].dropna().iloc[-1]
-                days_since = (injury_dt - last_return).days if injury_dt else -1
+                days_since = (
+                    (injury_dt - last_return).days
+                    if injury_dt
+                    else NO_PRIOR_INJURY_DAYS
+                )
                 days_since = max(0, days_since)
             else:
-                days_since = -1
+                days_since = NO_PRIOR_INJURY_DAYS  # never injured before
 
             prior_types = (
                 prior["injury_type"].str.lower().str.cat(sep=" ")
@@ -414,6 +419,15 @@ def build_stats_features(stats: pd.DataFrame) -> pd.DataFrame:
         agg["total_minutes"] / agg["total_appearances"].replace(0, np.nan)
     ).round(1)
 
+    # Workload spike — appearances this season vs previous season
+    agg = agg.sort_values(["player_tm_id", "season"])
+    agg["prev_appearances"] = agg.groupby("player_tm_id")["total_appearances"].shift(1)
+    agg["workload_spike"] = (
+        agg["total_appearances"] / agg["prev_appearances"].replace(0, np.nan)
+    ).round(2)
+    # No prior season → sentinel 1.0 (neutral, no spike)
+    agg["workload_spike"] = agg["workload_spike"].fillna(1.0)
+
     log.info(f"  Built stats for {len(agg)} player-season rows.")
     return agg
 
@@ -447,7 +461,7 @@ def build_player_season_features(
     else:
         inj_agg = pd.DataFrame()
 
-    seasons = list(SEASON_START_YEAR.keys())
+    seasons = SEASON_ORDER
     rows = []
 
     for _, player in players_df.iterrows():
@@ -470,6 +484,11 @@ def build_player_season_features(
             else:
                 age_at_season = np.nan
 
+            is_gk = int(player.get("is_goalkeeper", 0))
+            is_def = int(player.get("is_defender", 0))
+            is_mid = int(player.get("is_midfielder", 0))
+            is_fwd = int(player.get("is_forward", 0))
+
             row = {
                 "player_tm_id": tm_id,
                 "player_name": player.get("player_name", ""),
@@ -477,26 +496,28 @@ def build_player_season_features(
                 "season": season,
                 "age_at_season_start": age_at_season,
                 "height_cm": player.get("height_cm"),
-                "is_goalkeeper": player.get("is_goalkeeper", 0),
-                "is_defender": player.get("is_defender", 0),
-                "is_midfielder": player.get("is_midfielder", 0),
-                "is_forward": player.get("is_forward", 0),
+                "is_goalkeeper": is_gk,
+                "is_defender": is_def,
+                "is_midfielder": is_mid,
+                "is_forward": is_fwd,
                 "strong_foot_right": player.get("strong_foot_right", 0),
                 "strong_foot_left": player.get("strong_foot_left", 0),
                 "home_surface_type": home_surface,
             }
 
+            # Injury features
             if not inj_agg.empty:
                 match = inj_agg[
                     (inj_agg["player_tm_id"] == tm_id) & (inj_agg["season"] == season)
                 ]
                 if not match.empty:
                     m = match.iloc[0]
+                    inj_count_prior = int(m["injury_count_prior"])
                     row.update(
                         {
                             "injury_count_season": int(m["injury_count_season"]),
                             "impact_injuries_season": int(m["impact_injuries_season"]),
-                            "injury_count_prior": int(m["injury_count_prior"]),
+                            "injury_count_prior": inj_count_prior,
                             "injury_count_2yr": int(m["injury_count_2yr"]),
                             "days_since_last_injury": int(m["days_since_last_injury"]),
                             "has_acl": int(m["has_acl"]),
@@ -507,13 +528,14 @@ def build_player_season_features(
                         }
                     )
                 else:
+                    inj_count_prior = 0
                     row.update(
                         {
                             "injury_count_season": 0,
                             "impact_injuries_season": 0,
                             "injury_count_prior": 0,
                             "injury_count_2yr": 0,
-                            "days_since_last_injury": -1,
+                            "days_since_last_injury": NO_PRIOR_INJURY_DAYS,
                             "has_acl": 0,
                             "has_hamstring": 0,
                             "has_ankle": 0,
@@ -521,31 +543,52 @@ def build_player_season_features(
                             "avg_injury_surface": home_surface,
                         }
                     )
+            else:
+                inj_count_prior = 0
 
+            # Stats features
             if not stats_feats.empty:
                 sm = stats_feats[
                     (stats_feats["player_tm_id"] == tm_id)
                     & (stats_feats["season"] == season)
                 ]
                 if not sm.empty:
-                    row["total_appearances"] = int(sm.iloc[0]["total_appearances"])
+                    total_apps = int(sm.iloc[0]["total_appearances"])
+                    row["total_appearances"] = total_apps
                     row["total_minutes"] = int(sm.iloc[0]["total_minutes"])
                     row["avg_minutes_per_game"] = float(
                         sm.iloc[0]["avg_minutes_per_game"]
                     )
+                    row["workload_spike"] = float(sm.iloc[0]["workload_spike"])
+                    # Turf exposure proxy
+                    row["turf_exposure"] = total_apps * home_surface
                 else:
                     row["total_appearances"] = np.nan
                     row["total_minutes"] = np.nan
                     row["avg_minutes_per_game"] = np.nan
+                    row["workload_spike"] = 1.0
+                    row["turf_exposure"] = 0
             else:
                 row["total_appearances"] = np.nan
                 row["total_minutes"] = np.nan
                 row["avg_minutes_per_game"] = np.nan
+                row["workload_spike"] = 1.0
+                row["turf_exposure"] = 0
+
+            # Interaction features
+            row["pos_x_surface"] = (is_fwd + is_def) * home_surface
+            row["age_x_injury"] = (
+                age_at_season if not np.isnan(age_at_season) else 0
+            ) * inj_count_prior
+            row["age_x_acl"] = (
+                age_at_season if not np.isnan(age_at_season) else 0
+            ) * int(row.get("has_acl", 0))
 
             rows.append(row)
 
     master = pd.DataFrame(rows)
 
+    # Fill nulls for stats columns
     for col in ["total_appearances", "total_minutes", "avg_minutes_per_game"]:
         master[col] = master.groupby("player_tm_id")[col].transform(
             lambda x: x.fillna(x.mean())
@@ -562,7 +605,16 @@ def build_player_season_features(
         master["age_at_season_start"].median()
     )
 
+    # Recompute interaction features after imputation
+    master["age_x_injury"] = (
+        master["age_at_season_start"] * master["injury_count_prior"]
+    )
+    master["age_x_acl"] = master["age_at_season_start"] * master["has_acl"]
+
     log.info(f"  Master table: {len(master)} rows.")
+    log.info(
+        f"  Features: {[c for c in master.columns if c not in ['player_tm_id','player_name','club_name','season']]}"
+    )
     return master
 
 
@@ -609,7 +661,7 @@ def run() -> None:
     log.info(f"   Rows    : {len(master)}")
     log.info(f"   Players : {master['player_tm_id'].nunique()}")
 
-    log.info("\n   Null counts per column (injury dataset):")
+    log.info("\n   Null counts (injury dataset):")
     for col in injury_feats_with_bio.columns:
         nulls = injury_feats_with_bio[col].isna().sum()
         if nulls > 0:
