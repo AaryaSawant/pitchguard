@@ -6,9 +6,9 @@ Run:
     python src/model/train.py
 
 Outputs:
-    models/xgboost_model.pkl
-    models/feature_columns.json
-    models/shap_summary.png   (save figure for paper)
+    data/models/xgboost_model.pkl
+    data/models/feature_columns.json
+    data/models/shap_summary.png
 """
 
 import os
@@ -26,14 +26,12 @@ from imblearn.over_sampling import SMOTE
 
 warnings.filterwarnings("ignore")
 
-# ── Paths ────────────────────────────────────────────────────────────────────
+# ── Paths ─────────────────────────────────────────────────────────────────────
 DATA_PATH = "data/processed/model_dataset.csv"
-MODELS_DIR = "models"
+MODELS_DIR = "data/models"
 os.makedirs(MODELS_DIR, exist_ok=True)
 
-# ── Feature columns ───────────────────────────────────────────────────────────
-# Stats columns (avg_minutes_per_game, total_appearances) may be NaN while
-# the scraper is still running — they are included but NaNs are imputed below.
+# ── Feature columns (27 — updated from build_features.py v2) ─────────────────
 FEATURE_COLS = [
     "age_at_season_start",
     "height_cm",
@@ -44,7 +42,8 @@ FEATURE_COLS = [
     "strong_foot_right",
     "strong_foot_left",
     "home_surface_type",
-    "injury_surface",
+    "avg_injury_surface",
+    "turf_exposure",
     "injury_count_prior",
     "injury_count_2yr",
     "injury_count_impact_prior",
@@ -54,12 +53,18 @@ FEATURE_COLS = [
     "has_ankle",
     "has_meniscus",
     "total_appearances",
+    "total_minutes",
     "avg_minutes_per_game",
+    "workload_spike",
+    "pos_x_surface",
+    "age_x_injury",
+    "age_x_acl",
+    "impact_injuries_season",
 ]
 
 TARGET_COL = "is_impact_injury"
 
-# ── Season splits (NEVER shuffle — always chronological) ─────────────────────
+# ── Season splits (NEVER shuffle — always chronological) ──────────────────────
 TRAIN_SEASONS = ["19/20", "20/21", "21/22", "22/23"]
 VAL_SEASONS = ["23/24"]
 TEST_SEASONS = ["24/25", "25/26"]
@@ -70,13 +75,19 @@ def load_data():
     df = pd.read_csv(DATA_PATH)
     print(f"      Rows: {len(df):,}  |  Columns: {df.shape[1]}")
 
-    # Warn about missing stat columns so you know when scraper is still running
-    missing_pct = df[["total_appearances", "avg_minutes_per_game"]].isna().mean() * 100
-    for col, pct in missing_pct.items():
-        if pct > 0:
-            print(
-                f"      ⚠️  {col} is {pct:.1f}% NaN (stats scraper still running — OK to proceed)"
-            )
+    # Check which expected feature columns are missing
+    missing = [c for c in FEATURE_COLS if c not in df.columns]
+    if missing:
+        print(f"      ⚠️  Missing feature columns (will be filled with 0): {missing}")
+    else:
+        print("      ✅ All 27 feature columns present")
+
+    # Warn on NaN-heavy columns
+    for col in FEATURE_COLS:
+        if col in df.columns:
+            pct = df[col].isna().mean() * 100
+            if pct > 20:
+                print(f"      ⚠️  {col} is {pct:.1f}% NaN")
 
     return df
 
@@ -89,38 +100,28 @@ def split_data(df):
     test_df = df[df["season"].isin(TEST_SEASONS)]
 
     print(
-        f"      Train: {len(train_df):,} rows | Val: {len(val_df):,} rows | Test: {len(test_df):,} rows"
+        f"      Train: {len(train_df):,} | Val: {len(val_df):,} | Test: {len(test_df):,}"
     )
 
     if len(val_df) == 0:
         raise ValueError(
-            "Validation set is empty — check that 'season' column uses format '23/24'."
+            "Validation set is empty — check 'season' column uses format '23/24'."
         )
 
     return train_df, val_df, test_df
 
 
 def prepare_xy(df):
-    """Extract features + target; impute NaN stats with column median."""
-    # Only keep columns that exist in the dataframe
-    available = [c for c in FEATURE_COLS if c in df.columns]
-    missing_cols = set(FEATURE_COLS) - set(available)
-    if missing_cols:
-        print(f"      ⚠️  These feature columns are not in the CSV yet: {missing_cols}")
-        print(
-            "         They will be filled with 0 — rerun train.py once build_features.py is rerun with full stats."
-        )
+    """Extract features + target. Missing columns filled with 0, NaNs imputed with median."""
+    X = pd.DataFrame()
 
-    X = df[available].copy()
-
-    # Add any missing feature columns as zeros so the model always sees the same shape
     for col in FEATURE_COLS:
-        if col not in X.columns:
-            X[col] = 0
+        if col in df.columns:
+            X[col] = df[col]
+        else:
+            X[col] = 0  # column missing entirely — fill with 0
 
     X = X[FEATURE_COLS]  # enforce column order
-
-    # Impute NaN with median (safe for both sparse and full data)
     X = X.fillna(X.median(numeric_only=True))
 
     y = df[TARGET_COL].astype(int)
@@ -188,13 +189,20 @@ def evaluate(model, X_val, y_val, X_test, y_test):
         except ValueError:
             print("      AUC-ROC: N/A (only one class in split)")
 
+    # Class distribution note
+    total = len(y_val) + len(y_test)
+    pos = int(y_val.sum()) + int(y_test.sum())
+    print(
+        f"\n      Class distribution (val+test): {pos} impact / {total - pos} non-impact ({100*pos/max(total,1):.1f}% positive)"
+    )
+
 
 def run_shap(model, X_test):
     print("[6/7] Computing SHAP values ...")
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X_test)
 
-    # Global summary plot — save for paper Figure 1
+    # Global summary plot — Figure 1 in paper
     plt.figure()
     shap.summary_plot(shap_values, X_test, feature_names=FEATURE_COLS, show=False)
     fig_path = os.path.join(MODELS_DIR, "shap_summary.png")
@@ -202,12 +210,21 @@ def run_shap(model, X_test):
     plt.close()
     print(f"      SHAP summary plot saved → {fig_path}")
 
-    # Print top 5 features by mean |SHAP|
+    # Top 5 by mean |SHAP|
     mean_shap = np.abs(shap_values).mean(axis=0)
     top_idx = mean_shap.argsort()[::-1][:5]
     print("\n      Top 5 features by mean |SHAP|:")
     for rank, i in enumerate(top_idx, 1):
         print(f"        {rank}. {FEATURE_COLS[i]:<35} {mean_shap[i]:.4f}")
+
+    # Surface feature check — critical for paper
+    surface_feats = ["home_surface_type", "avg_injury_surface", "turf_exposure"]
+    print("\n      Surface feature SHAP ranks (critical for paper):")
+    for feat in surface_feats:
+        if feat in FEATURE_COLS:
+            idx = FEATURE_COLS.index(feat)
+            rank = int(mean_shap.argsort()[::-1].tolist().index(idx)) + 1
+            print(f"        {feat:<35} rank #{rank}  |SHAP|={mean_shap[idx]:.4f}")
 
     return shap_values
 
@@ -243,15 +260,12 @@ def main():
     model = train_model(X_train_res, y_train_res, X_val, y_val)
     evaluate(model, X_val, y_val, X_test, y_test)
 
-    # SHAP on test set (or val if test is empty)
     shap_X = X_test if len(y_test) > 0 else X_val
     run_shap(model, shap_X)
 
     save_model(model)
 
-    print(
-        "\n✅ Done. Rerun this script after stats scraper finishes for full-data results."
-    )
+    print("\n✅ Done.")
     print("=" * 55)
 
 
