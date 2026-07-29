@@ -1,0 +1,84 @@
+{
+  "model": "CatBoost (solo)",
+  "threshold": 0.45,
+  "val": {
+    "auc": 0.6138,
+    "f1": 0.4899,
+    "recall": 0.8121,
+    "precision": 0.3507
+  },
+  "test": {
+    "auc": 0.5907,
+    "f1": 0.4813,
+    "recall": 0.8425,
+    "precision": 0.3369
+  },
+  "val_test_gap": 0.0231,
+  "train_seasons": [
+    "19/20",
+    "20/21",
+    "21/22",
+    "22/23"
+  ],
+  "val_seasons": [
+    "23/24"
+  ],
+  "test_seasons": [
+    "24/25",
+    "25/26"
+  ],
+  "features": [
+    "age_at_season_start",
+    "height_cm",
+    "home_surface_type",
+    "avg_injury_surface",
+    "turf_exposure",
+    "injury_count_prior",
+    "injury_count_2yr",
+    "injury_count_impact_prior",
+    "days_since_last_injury",
+    "days_since_last_impact",
+    "career_impact_rate",
+    "surface_consistency",
+    "prior_games_missed",
+    "has_acl",
+    "has_hamstring",
+    "has_ankle",
+    "has_meniscus",
+    "total_appearances",
+    "total_minutes",
+    "avg_minutes_per_game",
+    "workload_spike",
+    "games_per_week",
+    "minutes_per_week",
+    "season_minutes_spike",
+    "peak_overload",
+    "fatigue_index",
+    "pos_x_surface",
+    "age_x_injury",
+    "age_x_acl",
+    "age_x_surface",
+    "injury_rate",
+    "injury_burden"
+  ],
+  "n_features": 32,
+  "days_cap": 730,
+  "best_params": {
+    "depth": 3,
+    "learning_rate": 0.01644581261714741,
+    "l2_leaf_reg": 11.93872983903529,
+    "min_data_in_leaf": 56,
+    "subsample": 0.6537145538726972,
+    "colsample_bylevel": 0.6480824436898984,
+    "iterations": 551,
+    "bootstrap_type": "Bernoulli",
+    "scale_pos_weight": 2.9671603348358015,
+    "eval_metric": "AUC",
+    "random_seed": 42
+  },
+  "dropped_features": [
+    "strong_foot_right",
+    "strong_foot_left"
+  ],
+  "note": "No SMOTE (class weighting only). CatBoost solo, no stack. Hyperparams selected via rolling-origin CV, not single fixed val split."
+}

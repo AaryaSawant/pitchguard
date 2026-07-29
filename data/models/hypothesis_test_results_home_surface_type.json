@@ -1,0 +1,104 @@
+{
+  "surface_var": "home_surface_type",
+  "n_obs": 16088,
+  "pseudo_r2": 0.0181,
+  "log_likelihood": -9417.79,
+  "variables": {
+    "home_surface_type": {
+      "coef": 0.1807,
+      "odds_ratio": 1.1981,
+      "ci_lower": 1.1054,
+      "ci_upper": 1.2986,
+      "p_value": 0.0,
+      "is_surface_var": true
+    },
+    "age_at_season_start": {
+      "coef": 0.0639,
+      "odds_ratio": 1.0659,
+      "ci_lower": 1.018,
+      "ci_upper": 1.1162,
+      "p_value": 0.0065,
+      "is_surface_var": false
+    },
+    "height_cm": {
+      "coef": -0.0644,
+      "odds_ratio": 0.9377,
+      "ci_lower": 0.902,
+      "ci_upper": 0.9747,
+      "p_value": 0.0011,
+      "is_surface_var": false
+    },
+    "injury_count_prior": {
+      "coef": 0.0216,
+      "odds_ratio": 1.0218,
+      "ci_lower": 0.9673,
+      "ci_upper": 1.0794,
+      "p_value": 0.4409,
+      "is_surface_var": false
+    },
+    "days_since_last_injury": {
+      "coef": 0.1185,
+      "odds_ratio": 1.1258,
+      "ci_lower": 1.0806,
+      "ci_upper": 1.1728,
+      "p_value": 0.0,
+      "is_surface_var": false
+    },
+    "career_impact_rate": {
+      "coef": 0.2019,
+      "odds_ratio": 1.2237,
+      "ci_lower": 1.17,
+      "ci_upper": 1.2798,
+      "p_value": 0.0,
+      "is_surface_var": false
+    },
+    "total_appearances": {
+      "coef": -0.0435,
+      "odds_ratio": 0.9574,
+      "ci_lower": 0.9217,
+      "ci_upper": 0.9946,
+      "p_value": 0.025,
+      "is_surface_var": false
+    },
+    "workload_spike": {
+      "coef": -0.0329,
+      "odds_ratio": 0.9677,
+      "ci_lower": 0.9272,
+      "ci_upper": 1.0099,
+      "p_value": 0.132,
+      "is_surface_var": false
+    },
+    "has_acl": {
+      "coef": -0.2645,
+      "odds_ratio": 0.7676,
+      "ci_lower": 0.6534,
+      "ci_upper": 0.9018,
+      "p_value": 0.0013,
+      "is_surface_var": false
+    },
+    "has_hamstring": {
+      "coef": 0.2879,
+      "odds_ratio": 1.3336,
+      "ci_lower": 1.1987,
+      "ci_upper": 1.4836,
+      "p_value": 0.0,
+      "is_surface_var": false
+    },
+    "has_ankle": {
+      "coef": -0.0311,
+      "odds_ratio": 0.9694,
+      "ci_lower": 0.8816,
+      "ci_upper": 1.0658,
+      "p_value": 0.5205,
+      "is_surface_var": false
+    },
+    "has_meniscus": {
+      "coef": -0.0925,
+      "odds_ratio": 0.9116,
+      "ci_lower": 0.7402,
+      "ci_upper": 1.1229,
+      "p_value": 0.3843,
+      "is_surface_var": false
+    }
+  }
+}

@@ -1,22 +1,17 @@
+from dotenv import load_dotenv
+
+load_dotenv()
+
+import os  # noqa: E402
+from supabase import create_client, Client  # noqa: E402
+
 """
 PitchGuard — Database Queries
 File: src/db/queries.py
-
 All Supabase calls live here. The dashboard and predictor import from this module.
-
 Quick connection test:
     python src/db/queries.py
 """
-
-import os
-from supabase import create_client, Client
-
-# ── Connection ────────────────────────────────────────────────────────────────
-# Set these in your environment or a .env file — never hardcode credentials.
-# Windows (cmd):    set SUPABASE_URL=https://xxxx.supabase.co
-#                   set SUPABASE_KEY=your-anon-key
-# Windows (PS):     $env:SUPABASE_URL="https://xxxx.supabase.co"
-#                   $env:SUPABASE_KEY="your-anon-key"
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
@@ -25,17 +20,17 @@ _client: Client | None = None
 
 
 def get_supabase() -> Client:
-    """Return a cached Supabase client. Raises clearly if credentials are missing."""
     global _client
     if _client is None:
-        if not SUPABASE_URL or not SUPABASE_KEY:
+        url = os.environ.get("SUPABASE_URL", "")
+        key = os.environ.get("SUPABASE_KEY", "")
+        if not url or not key:
             raise EnvironmentError(
                 "Supabase credentials not set.\n"
-                "  Windows CMD:  set SUPABASE_URL=... && set SUPABASE_KEY=...\n"
-                "  PowerShell:   $env:SUPABASE_URL='...'; $env:SUPABASE_KEY='...'\n"
+                "  PowerShell: $env:SUPABASE_URL='...'; $env:SUPABASE_KEY='...'\n"
                 "Or add them to a .env file and load with python-dotenv."
             )
-        _client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        _client = create_client(url, key)
     return _client
 
 
