@@ -23,25 +23,32 @@ REAL (from DB + v5 model):
 
 APPROXIMATED (no fixtures/travel data exists in the Supabase schema —
 flagged clearly rather than silently faked):
-    nextMatch   — no fixtures table exists yet. Kept as a placeholder using
-                  the club's mapped home surface (real) but a generic
-                  opponent/venue/date. Build a fixtures table + endpoint
-                  later to make this real.
+    nextMatch   — no fixtures table exists yet. Surface is real (pulled
+                  from stadiums table); opponent/venue/date are not.
     distance    — no travel/geo data anywhere in the schema. Placeholder.
     subScores   — none of the models (v5 CatBoost, logistic regression)
                   predict per-injury-type risk; only one overall impact-
-                  injury probability. This is a heuristic derived from
-                  injury-history flags, NOT a model output. If per-injury-
-                  type risk matters for the paper/product, that's a
-                  separate modelling task (train 4 binary classifiers,
-                  one per injury type) — not attempted here.
+                  injury probability. Heuristic derived from injury-
+                  history flags, NOT a model output.
     minutesLast30 / gamesLast14 — no match-by-match date data available,
                   only season totals. Approximated from season averages.
+
+────────────────────────────────────────────────────────────────────────────
+COLUMN NAME REFERENCE — verified against real Postgres errors, not guessed:
+    players          -> tm_player_id
+    injuries         -> player_tm_id
+    player_stats     -> player_tm_id
+    player_features  -> tm_player_id  (matches players, NOT injuries/stats)
+This file uses `tm_player_id` as its own internal variable name everywhere
+(row["tm_player_id"], features_lookup keys, response field) since that's
+what the `players` table — the row this code is built around — actually
+uses. The injuries lookup below is the ONE place that has to translate to
+the different column name (`player_tm_id`) that the injuries table uses.
 ────────────────────────────────────────────────────────────────────────────
 """
 
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,6 +60,8 @@ from src.db.queries import (
     get_player_by_id,
     get_player_injuries,
     get_stadium_surface,
+    get_player_features,
+    get_squad_features,
 )
 from src.model.predictor import predict
 
@@ -71,12 +80,73 @@ RISK_MED_MAX = 70
 
 
 # ── Feature extraction ──────────────────────────────────────────────────────
-def _row_to_features(row: dict) -> dict:
-    """Pull only the model's feature columns out of a raw players-table row.
-    predict() itself also fills missing cols with 0, so this is a light
-    pass-through — kept as a separate step in case DB column names ever
-    diverge from the model's expected feature names."""
-    return dict(row)
+def _row_to_features(
+    row: dict,
+    features_row: Optional[dict] = None,
+    player_injuries: Optional[list] = None,
+) -> dict:
+    """
+    Merges a players-table bio row with its matching player_features row
+    (the real engineered model inputs) before handing off to predict().
+
+    Three features aren't in player_season_features.csv and never made it
+    into the player_features table: injury_rate, injury_burden, and
+    injury_count_impact_prior. Computed live here the same way train.py's
+    engineer_features() does, instead of silently falling back to 0.
+
+    player_injuries: this player's injury rows, if already fetched by the
+    caller (e.g. squad()'s batched injuries_lookup) — avoids an extra query
+    per player. If None, fetches directly (used by the single-player
+    /player endpoint, where there's no batch to reuse).
+    """
+    merged = dict(row)
+    if features_row:
+        merged.update(
+            {
+                k: v
+                for k, v in features_row.items()
+                if k not in ("tm_player_id", "season")
+            }
+        )
+
+    # injury_rate = injury_count_prior / total_appearances (matches train.py)
+    injury_count_prior = merged.get("injury_count_prior") or 0
+    total_appearances = merged.get("total_appearances") or 0
+    merged["injury_rate"] = (
+        round(injury_count_prior / total_appearances, 4) if total_appearances else 0
+    )
+
+    # injury_burden = prior_games_missed / total_appearances (matches train.py / build_features.py v9)
+    prior_games_missed = merged.get("prior_games_missed") or 0
+    merged["injury_burden"] = (
+        round(prior_games_missed / total_appearances, 4) if total_appearances else 0
+    )
+
+    # injury_count_impact_prior: count of this player's prior injuries
+    # flagged as impact injuries. Not in player_features — computed from
+    # the injuries table (or reused if the caller already fetched it).
+    if player_injuries is None:
+        tm_id = row.get("tm_player_id")
+        player_injuries = get_player_injuries(tm_id) if tm_id else []
+    merged["injury_count_impact_prior"] = sum(
+        1 for inj in player_injuries if inj.get("is_impact_injury")
+    )
+
+    return merged
+
+
+def _calc_age(dob_str: Optional[str]) -> int:
+    """Calculate current age from a DOB string (e.g. '1995-09-15'). The
+    players table's own `age` column is a stale scraped value that doesn't
+    update — this computes it live instead."""
+    if not dob_str:
+        return 0
+    try:
+        dob = date.fromisoformat(str(dob_str)[:10])
+        today = date.today()
+        return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    except (ValueError, TypeError):
+        return 0
 
 
 def _position_from_flags(row: dict) -> str:
@@ -124,8 +194,7 @@ def _build_sub_scores(row: dict, risk_score: float) -> dict:
     """
     HEURISTIC, not a model output — see module docstring. Scales the overall
     risk score up for injury types the player has a history of, down for
-    ones they don't. Replace with real per-injury-type models if this needs
-    to be a genuine prediction rather than a display heuristic.
+    ones they don't.
     """
 
     def scaled(flag_key: str) -> int:
@@ -143,11 +212,9 @@ def _build_sub_scores(row: dict, risk_score: float) -> dict:
 
 def _build_next_match_placeholder(club_name: str) -> dict:
     """PLACEHOLDER — no fixtures table exists. Surface is real (pulled from
-    stadiums table); opponent/venue/date are not. See module docstring."""
+    stadiums table); opponent/venue/date are not."""
     surface_type = get_stadium_surface(club_name)
-    surface_label = (
-        "Artificial Turf" if surface_type == "artificial" else "Natural Grass"
-    )
+    surface_label = "Artificial Turf" if surface_type == 1 else "Natural Grass"
     return {
         "opponent": "TBD — fixtures not yet integrated",
         "venue": "TBD",
@@ -175,7 +242,7 @@ def _player_to_response(
         "tm_player_id": tm_id,  # keep the real ID around for detail lookups
         "name": row.get("player_name", "Unknown"),
         "position": _position_from_flags(row),
-        "age": row.get("age_at_season_start", 0),
+        "age": _calc_age(row.get("dob")),
         "minutesLast30": minutes_last_30,
         "gamesLast14": games_last_14,
         "daysSinceInjury": row.get("days_since_last_injury", 999),
@@ -193,6 +260,17 @@ def _player_to_response(
     }
 
 
+def log_missing_features(
+    tm_player_id: Optional[str], player_name: Optional[str]
+) -> None:
+    """Loud warning when a player has no row in player_features — their
+    risk score will be computed on defaults, not real data."""
+    print(
+        f"⚠️  No engineered features found for {player_name} ({tm_player_id}) — "
+        f"risk score will be inaccurate."
+    )
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 @app.get("/clubs")
 def list_clubs():
@@ -207,15 +285,29 @@ def squad(club_name: str):
             status_code=404, detail=f"No players found for club '{club_name}'"
         )
 
-    # Batch-fetch injuries once for the whole squad instead of N+1 queries
+    # Batch-fetch injuries once for the whole squad instead of N+1 queries.
+    # injuries table uses player_tm_id (different from players table's
+    # tm_player_id) — that's the real column name, not a typo.
     squad_injuries = get_squad_injuries(club_name)
     injuries_lookup: dict = {}
     for inj in squad_injuries:
-        injuries_lookup.setdefault(inj["tm_player_id"], []).append(inj)
+        key = inj.get("player_tm_id")
+        if key:
+            injuries_lookup.setdefault(key, []).append(inj)
+
+    # Batch-fetch real engineered features for the whole squad (CRITICAL —
+    # without this every prediction runs on an almost-empty feature vector)
+    player_ids = [p["tm_player_id"] for p in players if p.get("tm_player_id")]
+    features_lookup = get_squad_features(player_ids)
 
     results = []
     for idx, row in enumerate(players, start=1):
-        features = _row_to_features(row)
+        tm_id = row.get("tm_player_id")
+        features_row = features_lookup.get(tm_id)
+        if features_row is None:
+            log_missing_features(tm_id, row.get("player_name"))
+        player_injuries = injuries_lookup.get(tm_id, [])
+        features = _row_to_features(row, features_row, player_injuries)
         risk_result = predict(features)
         results.append(_player_to_response(row, idx, risk_result, injuries_lookup))
 
@@ -230,7 +322,10 @@ def player_detail(tm_player_id: str):
             status_code=404, detail=f"No player found with id '{tm_player_id}'"
         )
 
-    features = _row_to_features(row)
+    features_row = get_player_features(tm_player_id)
+    if features_row is None:
+        log_missing_features(tm_player_id, row.get("player_name"))
+    features = _row_to_features(row, features_row)
     risk_result = predict(features)
     return _player_to_response(
         row, idx=0, risk_result=risk_result, injuries_lookup=None

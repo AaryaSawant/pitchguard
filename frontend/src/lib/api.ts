@@ -8,7 +8,7 @@ const API_BASE = "http://localhost:8000";
 
 export interface ApiPlayer {
   id: number;
-  player_tm_id: string;
+  tm_player_id: string;
   name: string;
   position: string;
   age: number;
@@ -33,10 +33,23 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json();
 }
 
+export interface ClubSummary {
+  club_name: string;
+  surface_type: string; // "grass" | "artificial" | "unknown"
+  player_count: number;
+}
+
 export async function fetchClubs(): Promise<string[]> {
   const res = await fetch(`${API_BASE}/clubs`);
   const data = await handleResponse<{ clubs: string[] }>(res);
   return data.clubs;
+}
+
+export async function fetchClubsGrouped(): Promise<Record<string, string[]>> {
+  const res = await fetch(`${API_BASE}/clubs`);
+  const data = await handleResponse<{ clubs: string[] }>(res);
+  const { groupClubsByLeague } = await import("@/lib/clubLeagueMap");
+  return groupClubsByLeague(data.clubs);
 }
 
 export async function fetchSquad(clubName: string): Promise<ApiPlayer[]> {
@@ -45,7 +58,7 @@ export async function fetchSquad(clubName: string): Promise<ApiPlayer[]> {
   return data.players;
 }
 
-export async function fetchPlayer(playerTmId: string): Promise<ApiPlayer> {
-  const res = await fetch(`${API_BASE}/player/${encodeURIComponent(playerTmId)}`);
+export async function fetchPlayer(tmPlayerId: string): Promise<ApiPlayer> {
+  const res = await fetch(`${API_BASE}/player/${encodeURIComponent(tmPlayerId)}`);
   return handleResponse<ApiPlayer>(res);
 }

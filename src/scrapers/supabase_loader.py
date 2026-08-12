@@ -4,10 +4,17 @@ PitchGuard — Supabase Data Loader
 Loads all cleaned CSVs into Supabase tables.
 
 Tables loaded:
-  1. stadiums      <- data/raw/stadium_surfaces.csv
-  2. players       <- data/processed/players_clean.csv
-  3. injuries      <- data/processed/injuries_clean.csv
-  4. player_stats  <- data/raw/player_season_stats.csv
+  1. stadiums          <- data/raw/stadium_surfaces.csv
+  2. players           <- data/processed/players_clean.csv
+  3. injuries           <- data/processed/injuries_clean.csv
+  4. player_stats       <- data/raw/player_season_stats.csv
+  5. player_features    <- data/processed/player_season_features.csv
+                          (NEW — the 32 engineered model inputs from
+                          build_features.py v9. Without this table, every
+                          risk prediction the API serves runs on an almost-
+                          empty feature vector. Run
+                          create_player_features_table.sql in the Supabase
+                          SQL editor before running this loader.)
 
 Usage:
     cd C:\\Users\\Aarya\\Downloads\\Pitchguard\\pitchguard
@@ -45,6 +52,11 @@ for suffix in ["/rest/v1", "/rest"]:
 SCRAPERS_DATA = Path("src/scrapers/data")
 RAW = SCRAPERS_DATA / "raw"
 PROC = SCRAPERS_DATA / "processed"
+
+# player_season_features.csv is produced by build_features.py (v9) into
+# data/processed/ at the project root, NOT src/scrapers/data/processed/.
+# Adjust this path if your actual output location differs.
+FEATURES_PROC = Path("data/processed")
 
 BATCH_SIZE = 500
 
@@ -91,6 +103,48 @@ PLAYER_STATS_COLS = [
     "club",
     "appearances",
     "minutes_played",
+]
+
+# NEW — the actual 32 engineered features the v5 CatBoost model was trained
+# on (see src/features/build_features.py v9 / src/model/train_catboost.py
+# FEATURE_COLS). This is what was missing from Supabase entirely before.
+PLAYER_FEATURES_COLS = [
+    "tm_player_id",
+    "season",
+    "age_at_season_start",
+    "height_cm",
+    "strong_foot_right",
+    "strong_foot_left",
+    "home_surface_type",
+    "avg_injury_surface",
+    "turf_exposure",
+    "injury_count_prior",
+    "injury_count_2yr",
+    "injury_count_impact_prior",
+    "days_since_last_injury",
+    "days_since_last_impact",
+    "career_impact_rate",
+    "surface_consistency",
+    "prior_games_missed",
+    "has_acl",
+    "has_hamstring",
+    "has_ankle",
+    "has_meniscus",
+    "total_appearances",
+    "total_minutes",
+    "avg_minutes_per_game",
+    "workload_spike",
+    "games_per_week",
+    "minutes_per_week",
+    "season_minutes_spike",
+    "peak_overload",
+    "fatigue_index",
+    "pos_x_surface",
+    "age_x_injury",
+    "age_x_acl",
+    "age_x_surface",
+    "injury_rate",
+    "injury_burden",
 ]
 
 
@@ -262,6 +316,50 @@ def load_player_stats(sb: Client) -> None:
     log.info(f"  OK — {len(records)} player stat rows loaded.")
 
 
+def load_player_features(sb: Client) -> None:
+    """
+    NEW — loads the real v9 engineered model features from
+    data/processed/player_season_features.csv into the `player_features`
+    table. Run create_player_features_table.sql in the Supabase SQL editor
+    first if that table doesn't exist yet.
+
+    Only keeps each player's most recent season — the live dashboard shows
+    current risk, not risk for every historical season, so there's no need
+    to load all 17,808 rows when the API only ever reads the latest one
+    per player.
+    """
+    log.info("Loading player engineered features (v9)...")
+    df = load_csv(FEATURES_PROC / "player_season_features.csv")
+    if df is None:
+        return
+
+    # Rename player_tm_id -> tm_player_id to match Supabase schema convention
+    if "player_tm_id" in df.columns:
+        df = df.rename(columns={"player_tm_id": "tm_player_id"})
+
+    df = keep_cols(df, PLAYER_FEATURES_COLS)
+
+    # Keep only the most recent season per player. Assumes `season` sorts
+    # correctly as a string (e.g. "19/20" < "25/26" works here since year
+    # prefixes are already in order) — switch to sorting by a numeric year
+    # column instead if that assumption ever breaks.
+    if "season" in df.columns and "tm_player_id" in df.columns:
+        df = df.sort_values("season").drop_duplicates("tm_player_id", keep="last")
+
+    numeric_cols = [
+        c for c in PLAYER_FEATURES_COLS if c not in ("tm_player_id", "season")
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    records = prepare_records(df)
+    batch_upsert(sb, "player_features", records, "tm_player_id,season")
+    log.info(
+        f"  OK — {len(records)} player feature rows loaded (latest season per player)."
+    )
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def run() -> None:
     log.info("Connecting to Supabase...")
@@ -272,6 +370,7 @@ def run() -> None:
     load_players(sb)
     load_injuries(sb)
     load_player_stats(sb)
+    load_player_features(sb)
 
     log.info("\nAll data loaded into Supabase successfully.")
 

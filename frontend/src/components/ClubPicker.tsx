@@ -1,50 +1,34 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { fetchClubsGrouped } from "@/lib/api";
 
-const CLUBS: Record<string, string[]> = {
-  "Premier League": ["Arsenal", "Chelsea", "Liverpool", "Manchester City", "Tottenham Hotspur"],
-  "La Liga": ["Real Madrid", "Barcelona", "Atletico Madrid", "Sevilla"],
-  "Bundesliga": ["Bayern Munich", "Borussia Dortmund", "Bayer Leverkusen"],
-  "Serie A": ["Juventus", "AC Milan", "Inter Milan", "AS Roma"],
-  "Ligue 1": ["PSG", "Monaco", "Marseille"],
-  "Süper Lig": ["Galatasaray", "Fenerbahce", "Besiktas"],
-};
+// ─── Deterministic color/short-name generation ─────────────────────────────
+// Replaces the old hand-maintained CLUB_COLORS / CLUB_SHORT maps, which only
+// covered ~22 clubs. Hashes the club name to a stable HSL color and derives
+// a 3-letter short code so this works for all real clubs with zero manual
+// upkeep.
+const PALETTE_HUES = [4, 24, 48, 96, 152, 176, 200, 224, 260, 288, 320, 340];
 
-const CLUB_SHORT: Record<string, string> = {
-  Arsenal: "ARS", Chelsea: "CHE", Liverpool: "LIV", "Manchester City": "MCI", "Tottenham Hotspur": "TOT",
-  "Real Madrid": "RMA", Barcelona: "FCB", "Atletico Madrid": "ATM", Sevilla: "SEV",
-  "Bayern Munich": "BAY", "Borussia Dortmund": "BVB", "Bayer Leverkusen": "B04",
-  Juventus: "JUV", "AC Milan": "ACM", "Inter Milan": "INT", "AS Roma": "ROM",
-  PSG: "PSG", Monaco: "MON", Marseille: "MAR",
-  Galatasaray: "GAL", Fenerbahce: "FEN", Besiktas: "BES",
-};
+function hashString(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
 
-const CLUB_COLORS: Record<string, string> = {
-  Arsenal: "#ef0107", Chelsea: "#034694", Liverpool: "#c8102e", "Manchester City": "#6cabdd", "Tottenham Hotspur": "#132257",
-  "Real Madrid": "#d4af37", Barcelona: "#004d98", "Atletico Madrid": "#cb3524", Sevilla: "#d71920",
-  "Bayern Munich": "#dc052d", "Borussia Dortmund": "#fde100", "Bayer Leverkusen": "#e32219",
-  Juventus: "#e8e8e8", "AC Milan": "#fb090b", "Inter Milan": "#0053a0", "AS Roma": "#861f41",
-  PSG: "#004170", Monaco: "#e30613", Marseille: "#00a6e2",
-  Galatasaray: "#a90432", Fenerbahce: "#002d72", Besiktas: "#e8e8e8",
-};
+function clubColor(club: string): string {
+  const hue = PALETTE_HUES[hashString(club) % PALETTE_HUES.length];
+  return `hsl(${hue}, 70%, 55%)`;
+}
 
-const CLUB_SURFACE: Record<string, string> = {
-  Arsenal: "Natural Grass", Chelsea: "Natural Grass", Liverpool: "Natural Grass",
-  "Manchester City": "Natural Grass", "Tottenham Hotspur": "Natural Grass",
-  "Real Madrid": "Natural Grass", Barcelona: "Natural Grass", "Atletico Madrid": "Natural Grass", Sevilla: "Natural Grass",
-  "Bayern Munich": "Natural Grass", "Borussia Dortmund": "Natural Grass", "Bayer Leverkusen": "Natural Grass",
-  Juventus: "Natural Grass", "AC Milan": "Artificial Turf", "Inter Milan": "Natural Grass", "AS Roma": "Artificial Turf",
-  PSG: "Natural Grass", Monaco: "Natural Grass", Marseille: "Natural Grass",
-  Galatasaray: "Artificial Turf", Fenerbahce: "Natural Grass", Besiktas: "Natural Grass",
-};
-
-const CLUB_PLAYERS_COUNT: Record<string, number> = {
-  Arsenal: 24, Chelsea: 28, Liverpool: 25, "Manchester City": 23, "Tottenham Hotspur": 26,
-  "Real Madrid": 23, Barcelona: 24, "Atletico Madrid": 25, Sevilla: 24,
-  "Bayern Munich": 25, "Borussia Dortmund": 26, "Bayer Leverkusen": 24,
-  Juventus: 24, "AC Milan": 26, "Inter Milan": 25, "AS Roma": 24,
-  PSG: 25, Monaco: 23, Marseille: 24,
-  Galatasaray: 26, Fenerbahce: 25, Besiktas: 25,
-};
+function clubShortCode(club: string): string {
+  const words = club.replace(/[^a-zA-Z\s]/g, "").split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0] + (words[1][1] || words[0][1] || "")).toUpperCase().slice(0, 3);
+  }
+  return club.replace(/[^a-zA-Z]/g, "").slice(0, 3).toUpperCase();
+}
 
 interface ClubPickerProps {
   league: string;
@@ -53,11 +37,30 @@ interface ClubPickerProps {
 }
 
 export default function ClubPicker({ league, onSelectClub, onBack }: ClubPickerProps) {
-  const clubs = CLUBS[league] || [];
+  // Flat club-name list for this league — grouping now happens client-side
+  // via clubLeagueMap.ts (see fetchClubsGrouped in lib/api.ts), since the
+  // backend's /clubs endpoint returns an unfiltered flat list with no
+  // league field. NOTE: surface_type / player_count per club aren't
+  // available from this flat list — that data lived on the old
+  // /clubs/grouped endpoint (shelved pending the club-list gap fix). Add
+  // it back here once that's restored, if the surface/count badges matter.
+  const [clubs, setClubs] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   const carouselRef = useRef<HTMLDivElement>(null);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [clickedIdx, setClickedIdx] = useState<number | null>(null);
   const [tilts, setTilts] = useState<Record<number, { rx: number; ry: number }>>({});
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetchClubsGrouped()
+      .then((grouped) => setClubs(grouped[league] || []))
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [league]);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>, idx: number) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -166,143 +169,142 @@ export default function ClubPicker({ league, onSelectClub, onBack }: ClubPickerP
           <div style={{ width: 40, height: 1, background: "rgba(74,222,128,0.4)", margin: "16px auto 0" }} />
         </div>
 
+        {loading && (
+          <span style={{ color: "#4ade80", fontSize: "0.8rem", fontFamily: "'Satoshi', sans-serif", letterSpacing: "0.1em" }}>
+            LOADING CLUBS...
+          </span>
+        )}
+
+        {error && (
+          <span style={{ color: "#ef4444", fontSize: "0.8rem", fontFamily: "'Satoshi', sans-serif" }}>
+            Failed to load clubs: {error}
+          </span>
+        )}
+
+        {!loading && !error && clubs.length === 0 && (
+          <span style={{ color: "rgba(232,245,234,0.5)", fontSize: "0.8rem", fontFamily: "'Satoshi', sans-serif" }}>
+            No clubs found for {league}.
+          </span>
+        )}
+
         {/* Carousel wrapper */}
-        <div style={{ position: "relative", width: "100%", display: "flex", alignItems: "center" }}>
-          {/* Left arrow */}
-          <button
-            onClick={() => scroll("left")}
-            style={{
-              position: "absolute", left: 24, zIndex: 40,
-              width: 44, height: 44, borderRadius: "50%", cursor: "pointer",
-              background: "rgba(0,0,0,0.6)", border: "1px solid rgba(74,222,128,0.2)",
-              color: "#4ade80", fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center",
-              backdropFilter: "blur(12px)", transition: "all 0.2s ease",
-            }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(74,222,128,0.5)"; e.currentTarget.style.background = "rgba(74,222,128,0.1)"; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(74,222,128,0.2)"; e.currentTarget.style.background = "rgba(0,0,0,0.6)"; }}
-          >←</button>
+        {!loading && !error && clubs.length > 0 && (
+          <div style={{ position: "relative", width: "100%", display: "flex", alignItems: "center" }}>
+            {/* Left arrow */}
+            <button
+              onClick={() => scroll("left")}
+              style={{
+                position: "absolute", left: 24, zIndex: 40,
+                width: 44, height: 44, borderRadius: "50%", cursor: "pointer",
+                background: "rgba(0,0,0,0.6)", border: "1px solid rgba(74,222,128,0.2)",
+                color: "#4ade80", fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center",
+                backdropFilter: "blur(12px)", transition: "all 0.2s ease",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(74,222,128,0.5)"; e.currentTarget.style.background = "rgba(74,222,128,0.1)"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(74,222,128,0.2)"; e.currentTarget.style.background = "rgba(0,0,0,0.6)"; }}
+            >←</button>
 
-          {/* Cards */}
-          <div
-            ref={carouselRef}
-            style={{
-              display: "flex", gap: 20, overflowX: "auto", padding: "32px 80px",
-              scrollSnapType: "x mandatory", width: "100%",
-              scrollbarWidth: "none",
-            }}
-          >
-            {clubs.map((club, idx) => {
-              const isClicked = clickedIdx === idx;
-              const isHovered = hoveredIdx === idx;
-              const tilt = tilts[idx] || { rx: 0, ry: 0 };
-              const clubColor = CLUB_COLORS[club] || "#4ade80";
-              const isTurf = CLUB_SURFACE[club] === "Artificial Turf";
-              const shortName = CLUB_SHORT[club] || club.slice(0, 3).toUpperCase();
+            {/* Cards */}
+            <div
+              ref={carouselRef}
+              style={{
+                display: "flex", gap: 20, overflowX: "auto", padding: "32px 80px",
+                scrollSnapType: "x mandatory", width: "100%",
+                scrollbarWidth: "none",
+              }}
+            >
+              {clubs.map((club, idx) => {
+                const isClicked = clickedIdx === idx;
+                const isHovered = hoveredIdx === idx;
+                const tilt = tilts[idx] || { rx: 0, ry: 0 };
+                const color = clubColor(club);
+                const shortName = clubShortCode(club);
 
-              return (
-                <div
-                  key={club}
-                  onClick={() => handleClubClick(club, idx)}
-                  onMouseMove={e => { handleMouseMove(e, idx); setHoveredIdx(idx); }}
-                  onMouseLeave={() => handleMouseLeave(idx)}
-                  style={{
-                    flexShrink: 0, width: 210, height: 290,
-                    scrollSnapAlign: "center", cursor: "pointer",
-                    borderRadius: 16, position: "relative",
-                    transform: isClicked
-                      ? "scale(1.05)"
-                      : `rotateX(${tilt.rx}deg) rotateY(${tilt.ry}deg) translateZ(0)`,
-                    transformStyle: "preserve-3d",
-                    transition: isClicked ? "transform 0.3s ease" : "transform 0.15s ease",
-                    animation: `fadeUp 0.6s ease ${idx * 0.07}s both`,
-                    opacity: 0,
-                  }}
-                >
-                  <div style={{
-                    position: "absolute", inset: 0, borderRadius: 16,
-                    background: isHovered ? "rgba(8,22,14,0.8)" : "rgba(5,16,9,0.6)",
-                    backdropFilter: "blur(20px)",
-                    border: `1px solid ${isClicked || isHovered ? clubColor + "60" : "rgba(74,222,128,0.12)"}`,
-                    boxShadow: isClicked
-                      ? `0 24px 48px rgba(0,0,0,0.8), 0 0 32px ${clubColor}30`
-                      : isHovered
-                        ? `0 12px 32px rgba(0,0,0,0.6), 0 0 16px ${clubColor}20`
-                        : "0 4px 20px rgba(0,0,0,0.4)",
-                    display: "flex", flexDirection: "column",
-                    justifyContent: "space-between", padding: "24px 20px",
-                    overflow: "hidden",
-                    transition: "all 0.25s ease",
-                  }}>
-                    {/* Top accent */}
+                return (
+                  <div
+                    key={club}
+                    onClick={() => handleClubClick(club, idx)}
+                    onMouseMove={e => { handleMouseMove(e, idx); setHoveredIdx(idx); }}
+                    onMouseLeave={() => handleMouseLeave(idx)}
+                    style={{
+                      flexShrink: 0, width: 210, height: 290,
+                      scrollSnapAlign: "center", cursor: "pointer",
+                      borderRadius: 16, position: "relative",
+                      transform: isClicked
+                        ? "scale(1.05)"
+                        : `rotateX(${tilt.rx}deg) rotateY(${tilt.ry}deg) translateZ(0)`,
+                      transformStyle: "preserve-3d",
+                      transition: isClicked ? "transform 0.3s ease" : "transform 0.15s ease",
+                      animation: `fadeUp 0.6s ease ${idx * 0.05}s both`,
+                      opacity: 0,
+                    }}
+                  >
                     <div style={{
-                      position: "absolute", top: 0, left: 0, right: 0, height: 3,
-                      background: `linear-gradient(90deg, ${clubColor}, transparent)`,
-                      borderRadius: "16px 16px 0 0",
-                    }} />
-
-                    {/* Short name */}
-                    <div style={{
-                      textAlign: "center", marginTop: 12,
-                      fontSize: "3.2rem", fontWeight: 800, letterSpacing: "-0.02em",
-                      color: clubColor,
-                      textShadow: `0 0 20px ${clubColor}30`,
-                      lineHeight: 1,
+                      position: "absolute", inset: 0, borderRadius: 16,
+                      background: isHovered ? "rgba(8,22,14,0.8)" : "rgba(5,16,9,0.6)",
+                      backdropFilter: "blur(20px)",
+                      border: `1px solid ${isClicked || isHovered ? color + "60" : "rgba(74,222,128,0.12)"}`,
+                      boxShadow: isClicked
+                        ? `0 24px 48px rgba(0,0,0,0.8), 0 0 32px ${color}30`
+                        : isHovered
+                          ? `0 12px 32px rgba(0,0,0,0.6), 0 0 16px ${color}20`
+                          : "0 4px 20px rgba(0,0,0,0.4)",
+                      display: "flex", flexDirection: "column",
+                      justifyContent: "space-between", padding: "24px 20px",
+                      overflow: "hidden",
+                      transition: "all 0.25s ease",
                     }}>
-                      {shortName}
-                    </div>
+                      {/* Top accent */}
+                      <div style={{
+                        position: "absolute", top: 0, left: 0, right: 0, height: 3,
+                        background: `linear-gradient(90deg, ${color}, transparent)`,
+                        borderRadius: "16px 16px 0 0",
+                      }} />
 
-                    {/* Club name */}
-                    <div style={{ textAlign: "center" }}>
-                      <h3 style={{
-                        fontSize: "0.95rem", fontWeight: 700, color: "#e8f5ea",
-                        lineHeight: 1.3, marginBottom: 12,
+                      {/* Short name */}
+                      <div style={{
+                        textAlign: "center", marginTop: 12,
+                        fontSize: "3.2rem", fontWeight: 800, letterSpacing: "-0.02em",
+                        color: color,
+                        textShadow: `0 0 20px ${color}30`,
+                        lineHeight: 1,
                       }}>
-                        {club}
-                      </h3>
+                        {shortName}
+                      </div>
 
-                      {/* Divider */}
-                      <div style={{ width: "100%", height: 1, background: "rgba(74,222,128,0.1)", marginBottom: 12 }} />
+                      {/* Club name */}
+                      <div style={{ textAlign: "center" }}>
+                        <h3 style={{
+                          fontSize: "0.95rem", fontWeight: 700, color: "#e8f5ea",
+                          lineHeight: 1.3, marginBottom: 12,
+                        }}>
+                          {club}
+                        </h3>
 
-                      {/* Stats */}
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
-                        <span style={{
-                          fontSize: "0.58rem", letterSpacing: "0.18em", textTransform: "uppercase",
-                          color: "rgba(232,245,234,0.35)", fontFamily: "'Satoshi', sans-serif",
-                        }}>
-                          {CLUB_PLAYERS_COUNT[club]} squad players
-                        </span>
-                        <span style={{
-                          fontSize: "0.58rem", fontWeight: 700, letterSpacing: "0.14em",
-                          textTransform: "uppercase", padding: "3px 10px", borderRadius: 4,
-                          background: isTurf ? "rgba(251,191,36,0.1)" : "rgba(74,222,128,0.1)",
-                          border: `1px solid ${isTurf ? "rgba(251,191,36,0.25)" : "rgba(74,222,128,0.25)"}`,
-                          color: isTurf ? "#fbbf24" : "#4ade80",
-                          fontFamily: "'Satoshi', sans-serif",
-                        }}>
-                          {isTurf ? "⚠ Artificial Turf" : "✓ Natural Grass"}
-                        </span>
+                        {/* Divider */}
+                        <div style={{ width: "100%", height: 1, background: "rgba(74,222,128,0.1)" }} />
                       </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
 
-          {/* Right arrow */}
-          <button
-            onClick={() => scroll("right")}
-            style={{
-              position: "absolute", right: 24, zIndex: 40,
-              width: 44, height: 44, borderRadius: "50%", cursor: "pointer",
-              background: "rgba(0,0,0,0.6)", border: "1px solid rgba(74,222,128,0.2)",
-              color: "#4ade80", fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center",
-              backdropFilter: "blur(12px)", transition: "all 0.2s ease",
-            }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(74,222,128,0.5)"; e.currentTarget.style.background = "rgba(74,222,128,0.1)"; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(74,222,128,0.2)"; e.currentTarget.style.background = "rgba(0,0,0,0.6)"; }}
-          >→</button>
-        </div>
+            {/* Right arrow */}
+            <button
+              onClick={() => scroll("right")}
+              style={{
+                position: "absolute", right: 24, zIndex: 40,
+                width: 44, height: 44, borderRadius: "50%", cursor: "pointer",
+                background: "rgba(0,0,0,0.6)", border: "1px solid rgba(74,222,128,0.2)",
+                color: "#4ade80", fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center",
+                backdropFilter: "blur(12px)", transition: "all 0.2s ease",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(74,222,128,0.5)"; e.currentTarget.style.background = "rgba(74,222,128,0.1)"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(74,222,128,0.2)"; e.currentTarget.style.background = "rgba(0,0,0,0.6)"; }}
+            >→</button>
+          </div>
+        )}
 
         {/* Footer */}
         <p style={{

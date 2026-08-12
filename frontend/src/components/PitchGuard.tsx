@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import { fetchSquad, type ApiPlayer } from "@/lib/api";
 import { useState } from "react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { BorderBeam, CardBeam } from "@/components/ui/BorderBeam";
@@ -26,6 +28,28 @@ interface Player {
   nextMatch: { opponent: string; venue: string; surface: string; homeAway: string; date: string };
   injuryHistory: { year: number; type: string; gamesMissed: number }[];
   distance: number;
+}
+
+
+
+function mapApiPlayerToPlayer(p: ApiPlayer): Player {
+  return {
+    id: p.id,
+    name: p.name,
+    position: p.position,
+    age: p.age,
+    minutesLast30: p.minutesLast30,
+    gamesLast14: p.gamesLast14,
+    daysSinceInjury: p.daysSinceInjury,
+    injuryCount2yr: p.injuryCount2yr,
+    riskScore: p.riskScore,
+    tier: p.tier,
+    subScores: p.subScores,
+    shapFactors: p.shapFactors,
+    nextMatch: p.nextMatch,
+    injuryHistory: p.injuryHistory,
+    distance: p.distance ?? 0,
+  };
 }
 
 // ─── Mock Data Generator ───────────────────────────────────────────────────
@@ -172,6 +196,7 @@ function SurfaceTag({ surface }: { surface: string }) {
 }
 
 // ─── Risk Bar Chart ────────────────────────────────────────────────────────
+// ─── Risk Bar Chart ────────────────────────────────────────────────────────
 function RiskBarChart({ categories }: { categories: { label: string; value: number }[] }) {
   return (
     <div className="flex flex-col gap-2.5">
@@ -209,7 +234,6 @@ function RiskBarChart({ categories }: { categories: { label: string; value: numb
     </div>
   );
 }
-
 // ─── Squad Risk Table ──────────────────────────────────────────────────────
 function SquadRiskTable({ players, onSelect }: { players: Player[]; onSelect: (p: Player) => void }) {
   const [posFilter, setPosFilter] = useState("ALL");
@@ -833,9 +857,40 @@ interface PitchGuardProps {
 }
 
 export default function PitchGuard({ league, club, onBack }: PitchGuardProps) {
-  const [squad] = useState<Player[]>(() => generateMockSquad());
+  const [squad, setSquad] = useState<Player[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetchSquad(club)
+      .then((apiPlayers) => setSquad(apiPlayers.map(mapApiPlayerToPlayer)))
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [club]);
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [activeTab, setActiveTab] = useState("Dashboard");
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#040a05" }}>
+        <span className="text-emerald-400 font-scoreboard text-sm tracking-widest animate-pulse">
+          LOADING SQUAD TELEMETRY...
+        </span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center flex-col gap-3" style={{ background: "#040a05" }}>
+        <span className="text-red-400 font-scoreboard text-sm">FAILED TO LOAD SQUAD DATA</span>
+        <span className="text-white/40 text-xs">{error}</span>
+        <button onClick={onBack} className="text-emerald-400 text-xs underline mt-2">Go back</button>
+      </div>
+    );
+  }
 
   return (
     <div
