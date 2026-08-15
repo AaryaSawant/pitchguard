@@ -180,20 +180,11 @@ function PosBadge({ pos }: { pos: string }) {
   );
 }
 
-function SurfaceTag({ surface }: { surface: string }) {
-  const isAstro = surface === "Artificial Turf";
-  return (
-    <span
-      className={`text-[0.6rem] font-bold px-2 py-0.5 rounded font-scoreboard ${
-        isAstro
-          ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-          : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-      }`}
-    >
-      {isAstro ? "⚠ ASTRO" : "✓ GRASS"}
-    </span>
-  );
+function SurfaceTag({ surface: _surface }: { surface: string }) {
+  return null;
 }
+
+
 
 // ─── Risk Bar Chart ────────────────────────────────────────────────────────
 // ─── Risk Bar Chart ────────────────────────────────────────────────────────
@@ -592,17 +583,14 @@ function PlayerDetail({ player, onClose }: { player: Player; onClose: () => void
           </div>
         </div>
 
-        <div className="flex gap-2">
-          <ActionButton label="Flag Player" />
-          <ActionButton label="Full Report" primary />
-        </div>
       </div>
 
       {/* Details Scroll Area */}
       <div className="p-6 space-y-6 flex-1 overflow-y-auto">
         
-        {/* Next Match */}
-        <DetailSection title="NEXT FIXTURE TELEMETRY">
+        {/* Next Match — intentionally hidden until fixture data is available */}
+        {false && (
+          <DetailSection title="NEXT FIXTURE TELEMETRY">
           <GlassPanel>
             <div className="flex justify-between items-start mb-2">
               <span className="text-sm font-bold text-white tracking-wide">
@@ -621,7 +609,8 @@ function PlayerDetail({ player, onClose }: { player: Player; onClose: () => void
               </div>
             </div>
           </GlassPanel>
-        </DetailSection>
+          </DetailSection>
+        )}
 
         {/* Radar Bio-Metrics */}
         <DetailSection title="BIO-METRICS ANALYSIS RISK RADAR">
@@ -696,15 +685,6 @@ function PlayerDetail({ player, onClose }: { player: Player; onClose: () => void
           </GlassPanel>
         </DetailSection>
 
-        {/* Action Panel */}
-        <div className="flex gap-3 pt-2">
-          <button className="flex-1 py-2.5 rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 font-scoreboard font-bold text-xs hover:bg-red-500/20 transition-all cursor-pointer">
-            REST PLAYER
-          </button>
-          <button className="flex-1 py-2.5 rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-400 font-scoreboard font-bold text-xs hover:bg-amber-500/20 transition-all cursor-pointer">
-            ADJUST WORKLOAD
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -721,21 +701,7 @@ function DetailSection({ title, children }: { title: string; children: React.Rea
   );
 }
 
-function ActionButton({ label, primary, onClick }: { label: string; primary?: boolean; onClick?: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="px-4 py-2 rounded-lg text-xs font-scoreboard font-bold transition-all duration-300 border cursor-pointer"
-      style={{
-        background: primary ? "rgba(0, 232, 123,0.15)" : "rgba(255,255,255,0.04)",
-        borderColor: primary ? "rgba(0, 232, 123,0.35)" : "rgba(255,255,255,0.08)",
-        color: primary ? "#00e87b" : "#7a9ab8",
-      }}
-    >
-      {label}
-    </button>
-  );
-}
+
 
 // ─── Squad Summary Cards ───────────────────────────────────────────────────
 function SquadSummary({ players }: { players: Player[] }) {
@@ -796,8 +762,9 @@ function SquadSummary({ players }: { players: Player[] }) {
         );
       })}
 
-      {/* 5th Card: Next Surface */}
-      <div
+      {/* 5th Card: Next Surface — intentionally hidden until fixture data is available */}
+      {false && (
+        <div
         className="relative rounded-2xl p-5 border flex flex-col justify-between h-[110px] col-span-2 lg:col-span-1"
         style={{
           background: "rgba(10, 26, 18, 0.45)",
@@ -819,14 +786,15 @@ function SquadSummary({ players }: { players: Player[] }) {
         <span className="block text-[9px] text-white/30 tracking-wide font-semibold truncate">
           {isAstroNext ? "⚠ High joint load alert" : "✓ Standard safety ratio"}
         </span>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Tabbed Navigation ─────────────────────────────────────────────────────
 function DashboardTabs({ active, onChange }: { active: string; onChange: (tab: string) => void }) {
-  const tabs = ["Dashboard", "Settings", "Squad Health", "Analytics"];
+  const tabs = ["Dashboard"];
   return (
     <div className="flex items-center gap-1 bg-black/35 p-0.5 rounded-lg border border-white/5 self-start">
       {tabs.map((tab) => {
@@ -954,7 +922,7 @@ export default function PitchGuard({ league, club, onBack }: PitchGuardProps) {
           <div className="hidden md:flex items-center gap-2 bg-emerald-500/10 px-3 py-1.5 rounded-full border border-emerald-500/25">
             <span className="w-2 h-2 bg-emerald-400 rounded-full animate-ping" />
             <span className="text-[10px] font-scoreboard font-bold text-emerald-400 tracking-wider uppercase">
-              MODEL STATUS: ACTIVE · XGBoost v2 · SHAP v0.44 · Season 25/26
+              MODEL STATUS: ACTIVE · CatBoost v5 · SHAP v0.44 · Season 25/26
             </span>
           </div>
 
@@ -1003,10 +971,6 @@ export default function PitchGuard({ league, club, onBack }: PitchGuardProps) {
               <span className="text-[9px] font-scoreboard tracking-[0.2em] text-white/40 uppercase font-bold">
                 ROSTER TELEMETRY INDEX · SELECT PLAYER FOR FULL DIAGNOSTICS
               </span>
-              <div className="flex gap-2">
-                <ActionButton label="Export CSV" />
-                <ActionButton label="Analyze Load" primary />
-              </div>
             </div>
             <SquadRiskTable players={squad} onSelect={setSelectedPlayer} />
           </div>
