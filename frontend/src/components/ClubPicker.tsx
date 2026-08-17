@@ -258,7 +258,7 @@ export default function ClubPicker({
           opacity: 0.345,
           filter: "brightness(0.6) saturate(0.75)",
         }}
-        src="/src/assets/vid2.mp4"
+        src="/assets/vid2.mp4"
       />
 
       <div

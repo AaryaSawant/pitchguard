@@ -99,7 +99,7 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
     let loaded = 0;
     for (let i = 1; i <= TOTAL_FRAMES; i++) {
       const img = new Image();
-      img.src = `/src/assets/pitchguardimages/${padFrame(i)}`;
+      img.src = `/assets/pitchguardimages/${padFrame(i)}`;
       img.onload = () => {
         loaded++;
         setLoadedCount(loaded);

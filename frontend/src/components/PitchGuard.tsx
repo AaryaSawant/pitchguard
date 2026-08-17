@@ -865,7 +865,7 @@ export default function PitchGuard({ league, club, onBack }: PitchGuardProps) {
       className="min-h-screen relative overflow-hidden flex flex-col justify-between"
       style={{ background: "#040a05", fontFamily: SF, color: "#e8f5ea" }}
     >
-      <video autoPlay loop muted playsInline preload="auto"  style={{ position: "fixed", inset: 0, width: "100%", height: "100%",    objectFit: "cover", opacity: 0.345, filter: "brightness(0.6) saturate(0.7)", zIndex: 0 }}  src="/src/assets/vid3.mp4"/>
+      <video autoPlay loop muted playsInline preload="auto"  style={{ position: "fixed", inset: 0, width: "100%", height: "100%",    objectFit: "cover", opacity: 0.345, filter: "brightness(0.6) saturate(0.7)", zIndex: 0 }}  src="/assets/vid3.mp4"/>
       <div style={{ position: "fixed", inset: 0, zIndex: 1, pointerEvents: "none",  background: "radial-gradient(ellipse at center, rgba(4,10,5,0.4) 0%, rgba(4,10,5,0.88) 100%)" }} />
 
       {/* Floating Stadium Ambient Glow Orbs */}

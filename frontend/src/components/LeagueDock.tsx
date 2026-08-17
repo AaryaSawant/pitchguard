@@ -80,7 +80,7 @@ export default function LeagueDock({ onSelectLeague }: LeagueDockProps) {
           opacity: 0.4025,
           filter: "brightness(0.7) saturate(0.8)",
         }}
-        src="/src/assets/vid1.mp4"
+        src="/assets/vid1.mp4"
       />
 
       <div
