@@ -4,7 +4,7 @@
 // Talks to the FastAPI backend (src/api/main.py). Adjust API_BASE if your
 // backend runs on a different host/port.
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
 export interface ApiPlayer {
   id: number;
