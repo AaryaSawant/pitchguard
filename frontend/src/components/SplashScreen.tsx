@@ -90,7 +90,7 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
   const [activeSection, setActiveSection] = useState(0);
   const [revealedSections, setRevealedSections] = useState<Set<number>>(new Set([0]));
   const [exiting, setExiting] = useState(false);
-  const rafRef = useRef<number>();
+  const rafRef = useRef<number | undefined>(undefined);
   const lastFrameRef = useRef(1);
 
   // Preload all frames
